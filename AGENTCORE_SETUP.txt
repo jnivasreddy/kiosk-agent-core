@@ -1,0 +1,269 @@
+KIOSK AGENTCORE SETUP — STEP BY STEP
+==================================
+
+This guide describes a later deployment. Preparing or reading it creates no AWS
+resources. Deployment sections below incur AWS charges when the team runs them.
+The first deployment keeps our LangChain loop and OpenRouter model.
+
+1. UNDERSTAND WHAT IS BEING DEPLOYED
+
+Local browser -> app.py -> agent.py -> tools.py -> SQLite
+Cloud client -> AgentCore Runtime -> runtime.py -> SAME agent.py/tools.py
+
+runtime.py adapts the existing agent to the AgentCore HTTP contract. AgentCore
+hosts our loop; we are not using AWS's managed orchestration harness here.
+Streamlit is a separate client and is not included in the runtime ZIP.
+
+2. PREPARE YOUR MACHINE AND ACCOUNT
+
+Use Python 3.12, an AWS account/profile with deployment permissions, AWS CLI v2,
+and an OpenRouter key with credit. Confirm AgentCore Runtime and Python 3.12
+direct-code deployment are supported in your chosen AWS region.
+
+In the project folder:
+
+  conda activate ai-dev
+  python -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements-agentcore.txt
+
+Configure/login to an AWS profile using your organization's method. For SSO:
+
+  aws configure sso --profile training
+  aws sso login --profile training
+  export AWS_PROFILE=training
+  export AWS_DEFAULT_REGION=us-west-2
+  aws sts get-caller-identity
+
+Use your actual region/profile. Check the returned AWS account before deployment.
+AWS credentials authenticate deployment/invocation; the OpenRouter key separately
+authenticates model calls. This version needs no Bedrock model invocation access.
+
+3. VERIFY LOCALLY BEFORE PACKAGING
+
+  python -m unittest discover -s tests -v
+
+Tests use a fake model and temporary SQLite; they create no AWS resources.
+
+Copy .env.example to .env only if you do not already have .env. Add your real
+OPEN_ROUTER_API_KEY there. Do not commit or package that file.
+
+Start the LOCAL runtime server in terminal 1:
+
+  python runtime.py
+
+This is local HTTP, not deployment. In terminal 2:
+
+  curl http://127.0.0.1:8080/ping
+
+Then invoke with the session header (real paid model calls):
+
+  curl http://127.0.0.1:8080/invocations \
+    -H 'Content-Type: application/json' \
+    -H 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: training-session-00000000-0000-0000-0000-000000000001' \
+    -d '{"prompt":"Read the menu and save one cold coffee as a draft."}'
+
+Expect answer, order, steps and session_id. Stop the server with Ctrl+C.
+Port 8080 must be free. Do not suspend it with Ctrl+Z.
+
+4. BUILD A LINUX ARM64 DEPLOYMENT PACKAGE
+
+Do not ZIP the project directory or your Mac/Windows virtual environment. Native
+dependencies must match AgentCore's Linux ARM64 platform and Python version.
+The following installs dependencies into a clean temporary build directory and
+copies only four application source files. It performs no AWS upload.
+
+Run this entire Python block from the project root:
+
+  python - <<'PY'
+  from pathlib import Path
+  import shutil
+  import subprocess
+  import sys
+  import tempfile
+  import zipfile
+
+  root = Path.cwd()
+  output = root / 'dist'
+  output.mkdir(exist_ok=True)
+  with tempfile.TemporaryDirectory(prefix='kiosk-package-') as temporary:
+      package = Path(temporary)
+      subprocess.run([
+          sys.executable, '-m', 'pip', 'install',
+          '--platform', 'manylinux2014_aarch64',
+          '--implementation', 'cp', '--python-version', '3.12', '--abi', 'cp312',
+          '--only-binary=:all:', '--no-compile',
+          '--target', str(package), '-r', str(root / 'requirements-agentcore.txt')
+      ], check=True)
+      for name in ['runtime.py', 'agent.py', 'tools.py', 'database.py']:
+          shutil.copy2(root / name, package / name)
+      with zipfile.ZipFile(output / 'kiosk-runtime.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+          for file in package.rglob('*'):
+              if file.is_file():
+                  archive.write(file, file.relative_to(package))
+  print('Built dist/kiosk-runtime.zip; nothing uploaded.')
+  PY
+
+The four .py files must be at the ZIP root, next to the installed dependencies.
+Inspect the ZIP and confirm it contains no .env, SQLite files or local credentials.
+AgentCore's ZIP limits currently are 250 MB compressed and 750 MB uncompressed;
+check current AWS documentation if the package exceeds them. The distribution
+dependencies remain subject to their licenses; retain installed license metadata.
+
+5. AWS PERMISSIONS — HAVE THE AWS TEAM CONFIGURE THEM
+
+Two identities have different jobs:
+
+Deployment identity:
+- AgentCore create/read/update/delete as needed.
+- iam:PassRole for the runtime execution role.
+- Artifact-bucket upload/read permissions and any role/bucket creation permissions
+  needed for the chosen setup method.
+- Invocation permission for testing the resulting runtime.
+
+Runtime execution role:
+- Trusts bedrock-agentcore.amazonaws.com, with appropriate source restrictions.
+- Has the required runtime and CloudWatch logging permissions from AWS's execution
+  role documentation.
+- Has artifact S3 read access as required by direct code deployment, plus KMS
+  decrypt if the artifact uses a customer-managed encryption key.
+
+Use the AgentCore console's role creation flow if offered, or an existing role
+prepared by your AWS team. Verify it against the official permissions document
+below. Do not grant broad administrator permissions to the runtime.
+
+6. DEPLOY USING THE AWS CONSOLE
+
+The console route avoids introducing a second generated application structure.
+
+a. Open Amazon Bedrock AgentCore in the selected AWS account and region.
+b. Choose the Runtime/Agents hosting page, then Host Agent.
+c. Choose direct code/ZIP deployment, not a managed Harness template.
+d. Upload dist/kiosk-runtime.zip using Local Upload; if the console only offers
+   S3 Source, upload the ZIP to a private S3 bucket in the target region and
+   select that object.
+e. Name the agent kiosk_agent_core.
+f. Select Python 3.12. Set the entrypoint to runtime.py.
+g. Choose the runtime execution role prepared in step 5.
+h. Use PUBLIC network mode for this introductory external-provider demo. It needs
+   outbound access to https://openrouter.ai. This is not an unauthenticated public
+   website: leave inbound invocation protected by IAM.
+i. Configure environment variables:
+
+     OPEN_ROUTER_API_KEY     your OpenRouter key
+     OPEN_ROUTER_MODEL       google/gemini-2.5-flash
+     KIOSK_DB_PATH           /tmp/kiosk-agentcore.sqlite3
+
+   For this training deployment, supply the key using the console's protected
+   configuration workflow. People allowed to read runtime configuration may have
+   access to it; follow your organization's credential policy. Do not put the key
+   in a screenshot, source file, ZIP or Git. A production secrets-manager integration
+   requires explicit application/configuration support; this code does not fetch
+   Secrets Manager values simply because an ARN is provided.
+j. Create the runtime and wait until READY. Copy its Runtime ARN.
+k. Use the DEFAULT endpoint where available, or create an endpoint for the new
+   version as directed by the console. Record the chosen qualifier.
+
+If the console does not expose environment variables or the required upload
+option, use the equivalent CreateAgentRuntime API fields from the linked API
+documentation with your AWS team. Do not replace the application with an unrelated
+quickstart template just to obtain a deployment button.
+
+7. INVOKE THE DEPLOYED AGENT
+
+This invokes the cloud runtime without Streamlit. In a terminal using the same
+AWS profile/region and the virtual environment with boto3 installed:
+
+  export KIOSK_RUNTIME_ARN='paste-your-runtime-arn'
+
+  python - <<'PY'
+  import boto3
+  import json
+  import os
+  from uuid import uuid4
+
+  client = boto3.client('bedrock-agentcore')
+  session_id = str(uuid4())
+  for prompt in [
+      'Read the menu and save one cold coffee as a draft.',
+      'Keep my coffee and add one sandwich.'
+  ]:
+      response = client.invoke_agent_runtime(
+          agentRuntimeArn=os.environ['KIOSK_RUNTIME_ARN'],
+          qualifier='DEFAULT',
+          runtimeSessionId=session_id,
+          contentType='application/json',
+          payload=json.dumps({'prompt': prompt}).encode()
+      )
+      print(json.loads(response['response'].read()))
+  print('Session:', session_id)
+  PY
+
+Replace DEFAULT if you chose a named endpoint. Reuse the session ID for a
+conversation. A UUID meets the minimum length requirement. A different session
+must have a separate draft. A signed-in backend must bind users to session IDs
+before real multi-user use; our classroom adapter is not a login system.
+
+Expected first total: 12000 paise (INR 120).
+Expected second total: 22000 paise (INR 220), preserving coffee.
+The model can still make mistakes; verify actual order and tool steps.
+
+8. OPEN LOGS AND TRACES
+
+Open CloudWatch -> Logs -> Log groups. Find the runtime's
+/aws/bedrock-agentcore/runtimes/... log group. Read invocation and application
+logs. Compare model/tool log lines with the response's steps and saved order.
+
+Detailed distributed model/tool traces are a separate observability step. Enable
+CloudWatch Transaction Search and add the appropriate ADOT and LangChain/GenAI
+instrumentation following the official observability guide. This handoff does not
+already contain that exporter/instrumentation setup. Do not promise detailed
+spans merely because runtime.py uses the AgentCore SDK.
+
+9. STREAMLIT INTEGRATION COMES AFTER THE RUNTIME CHECK
+
+app.py still calls respond() locally. Merely deploying runtime.py does not change
+the UI's backend. For a later integration lesson, put an authenticated backend
+between users and the runtime; invoke with boto3 and a stable mapped session ID.
+Choose the UI's hosting separately. Do not distribute long-lived AWS credentials
+to browser JavaScript. Keep this separate from the first successful cloud call.
+
+10. UPDATES, DATA LIFETIME AND CLEANUP
+
+Rebuild the ZIP after code/dependency changes. Upload the new artifact, update
+the runtime/version and point the endpoint at the intended version. Test with a
+NEW session ID so you do not accidentally inspect an older session's code.
+
+This demo uses SQLite in /tmp and history in process memory. It is not shared or
+durable order storage. Session termination/replacement can lose them. Use an
+external data store and an intentional history strategy for durable customer data.
+
+After training, delete the endpoint(s) and runtime using the AgentCore console.
+Remove only the artifact object/bucket and dedicated IAM role/policies created
+for this exercise, after checking they are not shared. Decide whether to retain
+or delete CloudWatch log groups. Stopping the local server does not remove cloud
+resources. Review the AWS bill and confirm no exercise resources remain active.
+
+COMMON PROBLEMS
+
+401 from OpenRouter: check the runtime's model key/credit, not the AWS IAM key.
+403 invoking Runtime: check caller IAM, account, region, ARN and qualifier.
+Import error: verify libraries and source files are at the ZIP root.
+Native library error: rebuild for Linux ARM64 / matching Python version.
+Readonly filesystem error: use /tmp or an intentionally configured storage mount.
+Empty draft on next turn: check session-ID reuse and whether compute restarted.
+No spans: runtime logs are not full tracing; configure observability separately.
+
+OFFICIAL REFERENCES (reviewed 1 November 2026)
+
+Python direct deployment and console flow:
+https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-get-started-code-deploy-python.html
+
+Runtime permissions:
+https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html
+
+API fields for runtime configuration:
+https://docs.aws.amazon.com/cli/latest/reference/bedrock-agentcore-control/create-agent-runtime.html
+
+Observability configuration:
+https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html

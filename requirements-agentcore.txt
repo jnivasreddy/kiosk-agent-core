@@ -1,0 +1,2 @@
+-r requirements-core.txt
+bedrock-agentcore==1.25.1
