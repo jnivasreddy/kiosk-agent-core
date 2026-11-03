@@ -1,2 +1,2 @@
--r requirements-core.txt
-bedrock-agentcore==1.25.1
+# Compatibility filename for the AWS handoff: the runtime now uses FastAPI.
+-r requirements-api.txt

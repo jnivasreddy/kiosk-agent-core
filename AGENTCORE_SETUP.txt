@@ -7,7 +7,7 @@ The first deployment keeps our LangChain loop and OpenRouter model.
 
 1. UNDERSTAND WHAT IS BEING DEPLOYED
 
-Local browser -> app.py -> agent.py -> tools.py -> SQLite
+Local browser -> app.py -> HTTP -> api.py -> agent.py -> tools.py -> SQLite
 Cloud client -> AgentCore Runtime -> runtime.py -> SAME agent.py/tools.py
 
 runtime.py adapts the existing agent to the AgentCore HTTP contract. AgentCore
@@ -71,7 +71,7 @@ Port 8080 must be free. Do not suspend it with Ctrl+Z.
 Do not ZIP the project directory or your Mac/Windows virtual environment. Native
 dependencies must match AgentCore's Linux ARM64 platform and Python version.
 The following installs dependencies into a clean temporary build directory and
-copies only four application source files. It performs no AWS upload.
+copies only five application source files. It performs no AWS upload.
 
 Run this entire Python block from the project root:
 
@@ -95,7 +95,7 @@ Run this entire Python block from the project root:
           '--only-binary=:all:', '--no-compile',
           '--target', str(package), '-r', str(root / 'requirements-agentcore.txt')
       ], check=True)
-      for name in ['runtime.py', 'agent.py', 'tools.py', 'database.py']:
+      for name in ['runtime.py', 'api.py', 'agent.py', 'tools.py', 'database.py']:
           shutil.copy2(root / name, package / name)
       with zipfile.ZipFile(output / 'kiosk-runtime.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
           for file in package.rglob('*'):
@@ -104,7 +104,7 @@ Run this entire Python block from the project root:
   print('Built dist/kiosk-runtime.zip; nothing uploaded.')
   PY
 
-The four .py files must be at the ZIP root, next to the installed dependencies.
+The five .py files must be at the ZIP root, next to the installed dependencies.
 Inspect the ZIP and confirm it contains no .env, SQLite files or local credentials.
 AgentCore's ZIP limits currently are 250 MB compressed and 750 MB uncompressed;
 check current AWS documentation if the package exceeds them. The distribution
@@ -171,6 +171,8 @@ quickstart template just to obtain a deployment button.
 
 7. INVOKE THE DEPLOYED AGENT
 
+Install boto3 in the client environment if needed: python -m pip install boto3
+
 This invokes the cloud runtime without Streamlit. In a terminal using the same
 AWS profile/region and the virtual environment with boto3 installed:
 
@@ -222,8 +224,8 @@ spans merely because runtime.py uses the AgentCore SDK.
 
 9. STREAMLIT INTEGRATION COMES AFTER THE RUNTIME CHECK
 
-app.py still calls respond() locally. Merely deploying runtime.py does not change
-the UI's backend. For a later integration lesson, put an authenticated backend
+app.py now calls the FastAPI REST endpoints over HTTP. Deploying runtime.py
+does not automatically turn it into an authenticated AgentCore client. For a later integration lesson, put an authenticated backend
 between users and the runtime; invoke with boto3 and a stable mapped session ID.
 Choose the UI's hosting separately. Do not distribute long-lived AWS credentials
 to browser JavaScript. Keep this separate from the first successful cloud call.
@@ -267,3 +269,12 @@ https://docs.aws.amazon.com/cli/latest/reference/bedrock-agentcore-control/creat
 
 Observability configuration:
 https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html
+
+FASTAPI UPDATE
+
+The backend now uses api.py (FastAPI). runtime.py only launches that app with
+Uvicorn; it does not use BedrockAgentCoreApp. For the complete local application,
+install requirements.txt, start Uvicorn api:app on 8080, then Streamlit app.py.
+The default cloud /invocations path supports chat only; auxiliary REST routes
+/menu, /order and /reset need an explicit cloud API/invocation design before
+connecting this local Streamlit client to AgentCore. See HANDOFF.txt.

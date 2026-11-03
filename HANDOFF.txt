@@ -1,145 +1,113 @@
-KIOSK: AWS TRAINING HANDOFF — PREPARED, NOT DEPLOYED
-=================================================
+KIOSK AWS HANDOFF: FASTAPI BACKEND + STREAMLIT CLIENT
+==================================================
 
-1. WHAT THIS PROJECT IS
+Nothing has been deployed. This prepares code for the AWS training team.
 
-A small LangChain tool loop that lets a customer build a draft order.
-The first AWS lesson should HOST THIS EXISTING LOOP on AgentCore Runtime.
-Do not replace it with the managed AgentCore Harness or a different framework
-in the same lesson. That is a separate migration exercise.
+CURRENT ARCHITECTURE
 
-The code still calls OpenRouter. Deploying to AWS does not switch the model to
-Bedrock. There is no payment, checkout, verified login, artificial spending limit,
-evaluation machinery, fault injection or cloud resource creation in this folder.
+Browser -> Streamlit app.py -> HTTP -> FastAPI api.py
+  -> agent.respond() -> kiosk tools -> SQLite
 
-2. ONLY FIVE APPLICATION FILES TO EXPLAIN
+Frontend: display conversation, menu, tool calls and saved draft.
+Backend: validate input, retain model history, execute tools and read/write orders.
+The UI imports neither agent.py nor database.py. OpenRouter calls happen only
+in the backend. No payment, real login or checkout is implemented.
 
-app.py       Local Streamlit UI and browser-session history.
-agent.py     Existing model -> tool -> model loop.
-tools.py     Three tools; customer identity is supplied by application code.
-database.py  Transactional SQLite draft operations and small fixed menu.
-runtime.py   Thin AgentCore entrypoint that calls the SAME respond() function.
+LOCAL RUN (two terminals, ai-dev activated, from this folder)
 
-requirements-core.txt       Shared model/tool dependencies.
-requirements.txt            Core + Streamlit for local teaching.
-requirements-agentcore.txt  Core + AgentCore SDK, without the UI dependency.
-tests/test_kiosk.py          Local checks; fake model, real SQLite, no AWS calls.
+Install: python -m pip install -r requirements.txt
+Backend: python -m uvicorn api:app --host 127.0.0.1 --port 8080
+Frontend: python -m streamlit run app.py
 
-3. LOCAL CLASSROOM APP (EXISTING FLOW)
+UI: http://localhost:8501
+Interactive API docs: http://localhost:8080/docs
+Optional UI backend override in .env: KIOSK_API_URL=http://127.0.0.1:8080
+No servers start merely by importing the modules.
 
-conda activate ai-dev
-python -m pip install -r requirements.txt
-python -m streamlit run app.py
+LOCAL REQUEST EXAMPLE
 
-Supply OPEN_ROUTER_API_KEY through the ignored .env file. This file is not for
-Git or deployment artifacts. Copy .env.example when setting up a new machine.
-The local app remains independent of the AgentCore SDK.
-
-4. OPTIONAL LOCAL AGENTCORE CONTRACT REHEARSAL — NO AWS RESOURCES
-
-Use a separate environment so AWS dependencies do not alter the classroom one:
-
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-agentcore.txt
-python runtime.py
-
-This starts a local server on port 8080. It is not an AWS deployment. Do not run
-it automatically during setup. Stop with Ctrl+C. If 8080 is busy, stop the old
-process first. AgentCore's default HTTP contract expects port 8080.
-
-From another terminal, check health and invoke (this makes paid model calls):
-
-curl http://127.0.0.1:8080/ping
-curl http://127.0.0.1:8080/invocations \
+curl http://127.0.0.1:8080/chat \
   -H 'Content-Type: application/json' \
   -H 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: classroom-session-00000000-0000-0000-0000-000000000001' \
-  -d '{"prompt":"Show the menu and save one cold coffee as a draft."}'
+  -d '{"prompt":"Read the menu and save one cold coffee."}'
 
-Repeat the same session header for the next turn:
-  {"prompt":"Keep my coffee and add one sandwich."}
+Use the same session header for GET /order and POST /reset.
+GET /menu and GET /ping need no session. POST /invocations is a chat alias.
+Missing/invalid request fields return 422. Provider/agent failures return 502
+with a safe message; inspect backend logs and refresh the saved order before
+retrying because a tool write can succeed before a later model call fails.
 
-Request schema: {"prompt": "non-empty text, at most 4000 characters"}
-Response schema: {"answer": ..., "order": ..., "steps": ..., "session_id": ...}
-Do not send history, tokens or customer_id in the request. The adapter keeps
-LangChain messages internally and derives the draft scope from context.session_id.
-The client must verify user identity and bind users to session IDs before any
-real multi-user deployment. A session ID alone is not authentication.
+FILES
 
-5. WHAT THE AWS TEAM WILL PACKAGE LATER
+app.py         Streamlit HTTP client.
+api.py         FastAPI routes and in-process conversation history.
+agent.py       Existing LangChain model/tool loop.
+tools.py       Menu, read draft, replace draft tools.
+database.py    Transactional local SQLite and small fixed menu.
+runtime.py     Optional cloud-oriented Uvicorn launcher for api.app.
 
-Include ONLY these source files at the runtime package root:
-  runtime.py, agent.py, tools.py, database.py
+requirements-core.txt       Shared model/tool libraries.
+requirements-api.txt        Core + FastAPI + Uvicorn (backend only).
+requirements.txt            API + Streamlit + requests (whole local app).
+requirements-agentcore.txt  Compatibility handoff filename: API dependencies.
+tests/test_kiosk.py          API + UI tests, fake model and real temporary SQLite.
 
-Install dependencies from requirements-agentcore.txt. Also include
-requirements-core.txt in build inputs because the runtime requirements reference
-it. The uploaded runtime needs the installed libraries, not merely a requirements
-file. Build Linux ARM64 wheels matching the chosen Python runtime (3.12 here).
+The SDK's previous BedrockAgentCoreApp server was replaced. Do not start it
+alongside FastAPI. No Bedrock AgentCore SDK is required to serve this backend.
+AWS boto3 is only needed by a future cloud client/deployment process.
 
-Do NOT package .env, local SQLite files, __pycache__, .venv, tests, Streamlit app,
-teaching notes or unrelated projects. A .gitignore alone does not control a ZIP;
-use an explicit allowlist. Preserve required dependencies when packaging.
+AGENTCORE DEPLOYMENT LATER
 
-Recommended teaching route: direct Python CodeZip, with runtime.py as entrypoint.
-AWS's CLI can prepare ZIP dependencies, upload to S3 and provision Runtime later.
-No agentcore create/deploy command has been executed for this handoff.
-No account-specific CLI scaffold, role ARN, region or bucket is hard-coded.
+For source packaging, include runtime.py, api.py, agent.py, tools.py, database.py
+at the ZIP root with installed Linux ARM64/Python 3.12 dependencies from
+requirements-agentcore.txt. Keep requirements-api.txt and requirements-core.txt
+available during the build because dependency files reference them.
 
-6. AWS TEAM DECISIONS BEFORE DEPLOYMENT
+Do not package .env, SQLite files, tests, Streamlit, virtual environments,
+__pycache__ or local credentials. Use an explicit source allowlist, not ZIP .
 
-- Select account/profile, supported region and Python runtime.
-- Choose IAM inbound auth and an execution role with necessary permissions.
-- Supply model credentials using the team's approved secrets integration; do not
-  commit the local .env or pretend the execution role authenticates OpenRouter.
-- Permit outbound network access to https://openrouter.ai/api/v1.
-- Decide whether the training demo intentionally uses disposable per-session data
-  or needs an external durable database.
-- Enable CloudWatch logs and, for trace visualization, Transaction Search and
-  the chosen ADOT/framework instrumentation. Basic runtime logs do not imply
-  detailed model/tool spans are already instrumented.
-- Add an authenticated backend/client invocation path. app.py currently calls
-  respond() locally; it is NOT already a client for the cloud endpoint.
-- Choose the UI hosting separately. AgentCore hosts the agent, not Streamlit.
-- Define deployment, verification, rollback and cleanup steps for the lesson.
+runtime.py serves api.app on 0.0.0.0:8080 and defaults the database to
+/tmp/kiosk-agentcore.sqlite3. /ping and /invocations implement the default
+AgentCore HTTP paths. Verify session header forwarding in the target account.
+Supply the OpenRouter key through approved runtime configuration, not Git.
 
-7. STATE LIFECYCLE — IMPORTANT FOR AN HONEST DEMO
+Important: standard AgentCore invocation is a managed /invocations operation.
+It does not expose our auxiliary /menu, /order, /reset paths as arbitrary public
+REST APIs. The AWS team must either add explicit invocation actions for those
+operations, or expose a suitable authenticated backend API surface. Do not
+point KIOSK_API_URL at a Runtime ARN or assume localhost-style routes work there.
+Keep cloud client integration as a separate, tested deployment step.
 
-runtime.py uses /tmp/kiosk-agentcore.sqlite3 and in-process history.
-Each hosted Runtime session is isolated. Reusing a session ID preserves context
-only while the associated compute retains it. State is NOT guaranteed to survive
-termination, replacement or version changes. Different sessions do not form a
-shared inventory/order database. SQLite here demonstrates tool semantics only.
+For ordinary FastAPI hosting (e.g. an authenticated container service), these
+REST routes can be exposed directly with the appropriate networking/auth setup.
+This handoff does not select or create that infrastructure.
 
-Do not describe this as durable customer/order storage or production-ready
-authentication. For durability across sessions, move the database operations to
-a suitable external store; use an intentional history persistence strategy too.
+STATE / IDENTITY LIMITS
 
-8. CHECKS BEFORE HANDOVER
+The random browser session ID scopes the draft and history; it is not verified
+customer authentication. Anyone who has a session ID can address that session
+on an unprotected server. Bind authenticated users to sessions before public use.
 
-After installing requirements-agentcore.txt:
+Use ONE backend worker. Model history and session locks live in that process;
+multiple workers would have inconsistent histories. SQLite persists only on
+the chosen local filesystem. AgentCore sessions are isolated, and /tmp/history
+are disposable, not durable shared customer data. Use external state before
+scaling or promising durable cross-session orders.
+
+VERIFICATION
+
 python -m unittest discover -s tests -v
 
-These tests mock the model, exercise real SQLite transactions and call the
-adapter without starting its HTTP server. They require no model key or AWS account.
-The application tests can run with requirements.txt alone; adapter tests skip
-when the AgentCore SDK is not installed.
+Checks use FastAPI TestClient and Streamlit AppTest without binding real ports.
+They verify order isolation, history, cart preservation, reset, validation,
+safe provider errors, the /invocations alias and UI error handling. No AWS
+resources or paid model calls are required.
 
-Deployment acceptance later:
-- A new session can read menu, save one coffee and return draft/12000 paise.
-- The next turn in that same session can preserve coffee and add a sandwich.
-- A different session sees an empty draft.
-- Invalid quantities/products do not overwrite a valid draft.
-- Model/tool errors do not produce a fabricated confirmation.
-- CloudWatch contains invocation logs; instrumented spans are verified separately.
-- Cleanup removes the resources the training team created.
+The current server emits ordinary logs. Detailed CloudWatch model/tool spans
+still need explicit ADOT/framework instrumentation and Transaction Search setup.
 
-9. OFFICIAL REFERENCES
+DEPLOYMENT GUIDE
 
-Runtime entrypoint and ZIP packaging:
-https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-get-started-code-deploy-python.html
-
-Session context:
-https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html
-
-Observability:
-https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html
+See AGENTCORE_SETUP.txt. Keep the AWS account/region, role, secrets, artifact
+storage, observability, invocation client, verification and cleanup decisions
+with the AWS team. No deployment is performed by the application or tests.
