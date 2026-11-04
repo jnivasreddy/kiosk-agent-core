@@ -1,0 +1,6 @@
+-r requirements-api.txt
+boto3
+redis>=5,<7
+authlib>=1.6,<2
+itsdangerous>=2,<3
+httpx>=0.27,<1

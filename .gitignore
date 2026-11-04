@@ -10,3 +10,10 @@ build/
 .agentcore/
 agentcore/.env.local
 .pytest_cache/
+
+
+!FLOW_CORRECTED.md
+
+.DS_Store
+.ipynb_checkpoints/
+!README.md

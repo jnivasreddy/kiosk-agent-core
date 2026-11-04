@@ -1,11 +1,13 @@
 """FastAPI owns the agent, conversation history and database access."""
 import logging
-from threading import Lock
 from typing import Annotated
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 from pydantic import BaseModel, ConfigDict, Field
 import agent
 import database
+from history import load_history, save_history, conversation_lock, ConversationBusy
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Corner Kiosk API", version="1.0")
@@ -17,20 +19,19 @@ class ChatRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000, strict=True)
 
 
-class Conversation:
-    def __init__(self):
-        self.history = []
-        self.lock = Lock()
-
-
-# One worker for this teaching app. History lasts only for this server process.
-sessions = {}
-
-
-def conversation(session_id):
+def check_session(session_id):
     if not session_id.strip():
         raise HTTPException(status_code=400, detail="A session ID is required.")
-    return sessions.setdefault(session_id, Conversation())
+
+
+@app.exception_handler(RedisError)
+def redis_unavailable(request, exc):
+    return JSONResponse(status_code=503, content={"detail": "Conversation storage is unavailable. Check your saved draft before retrying."})
+
+
+@app.exception_handler(ConversationBusy)
+def conversation_busy(request, exc):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.get("/ping")
@@ -45,17 +46,17 @@ def menu():
 
 @app.get("/order")
 def current_order(session_id: SessionId):
-    state = conversation(session_id)
-    with state.lock:
+    check_session(session_id)
+    with conversation_lock(session_id):
         return database.get_order(session_id)
 
 
 @app.post("/reset")
 def reset(session_id: SessionId):
-    state = conversation(session_id)
-    with state.lock:
+    check_session(session_id)
+    with conversation_lock(session_id):
         order = database.save_order(session_id, [])
-        state.history = []
+        save_history(session_id, [])
     return {"order": order}
 
 
@@ -66,13 +67,16 @@ def reset(session_id: SessionId):
 def chat(body: ChatRequest, session_id: SessionId):
     if not body.prompt.strip():
         raise HTTPException(status_code=422, detail="prompt cannot be blank.")
-    state = conversation(session_id)
-    with state.lock:
+    check_session(session_id)
+    with conversation_lock(session_id):
+        history = load_history(session_id)
         try:
-            result = agent.respond(body.prompt, session_id, state.history)
+            # Session-only demo until verified customer login is configured.
+            customer_id = session_id
+            result = agent.respond(body.prompt, customer_id, history)
         except Exception:
             log.exception("Chat failed")
             raise HTTPException(status_code=502, detail="The agent could not complete the request. Check your saved draft before retrying.") from None
-        state.history = result["history"]
+        save_history(session_id, result["history"])
     return {"answer": result["answer"], "order": result["order"],
             "steps": result["steps"], "session_id": session_id}

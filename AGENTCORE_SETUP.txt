@@ -71,7 +71,7 @@ Port 8080 must be free. Do not suspend it with Ctrl+Z.
 Do not ZIP the project directory or your Mac/Windows virtual environment. Native
 dependencies must match AgentCore's Linux ARM64 platform and Python version.
 The following installs dependencies into a clean temporary build directory and
-copies only five application source files. It performs no AWS upload.
+copies only six application source files. It performs no AWS upload.
 
 Run this entire Python block from the project root:
 
@@ -95,7 +95,7 @@ Run this entire Python block from the project root:
           '--only-binary=:all:', '--no-compile',
           '--target', str(package), '-r', str(root / 'requirements-agentcore.txt')
       ], check=True)
-      for name in ['runtime.py', 'api.py', 'agent.py', 'tools.py', 'database.py']:
+      for name in ['runtime.py', 'api.py', 'agent.py', 'tools.py', 'database.py', 'history.py']:
           shutil.copy2(root / name, package / name)
       with zipfile.ZipFile(output / 'kiosk-runtime.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
           for file in package.rglob('*'):
@@ -104,7 +104,7 @@ Run this entire Python block from the project root:
   print('Built dist/kiosk-runtime.zip; nothing uploaded.')
   PY
 
-The five .py files must be at the ZIP root, next to the installed dependencies.
+The six .py files must be at the ZIP root, next to the installed dependencies.
 Inspect the ZIP and confirm it contains no .env, SQLite files or local credentials.
 AgentCore's ZIP limits currently are 250 MB compressed and 750 MB uncompressed;
 check current AWS documentation if the package exceeds them. The distribution
@@ -278,3 +278,8 @@ install requirements.txt, start Uvicorn api:app on 8080, then Streamlit app.py.
 The default cloud /invocations path supports chat only; auxiliary REST routes
 /menu, /order and /reset need an explicit cloud API/invocation design before
 connecting this local Streamlit client to AgentCore. See HANDOFF.txt.
+
+REDIS UPDATE: history.py now loads/saves conversations in Redis when REDIS_URL
+is set. Include history.py in the deployment ZIP and configure REDIS_URL in AWS.
+Without REDIS_URL, local process memory is used. Customer login and session-owner
+mapping are not implemented yet. See FLOW_CORRECTED.md for current and planned diagrams.

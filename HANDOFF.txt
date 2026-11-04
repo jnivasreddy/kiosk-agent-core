@@ -111,3 +111,8 @@ DEPLOYMENT GUIDE
 See AGENTCORE_SETUP.txt. Keep the AWS account/region, role, secrets, artifact
 storage, observability, invocation client, verification and cleanup decisions
 with the AWS team. No deployment is performed by the application or tests.
+
+REDIS UPDATE: history.py now loads/saves conversations in Redis when REDIS_URL
+is set. Include history.py in the deployment ZIP and configure REDIS_URL in AWS.
+Without REDIS_URL, local process memory is used. Customer login and session-owner
+mapping are not implemented yet. See FLOW_CORRECTED.md for current and planned diagrams.

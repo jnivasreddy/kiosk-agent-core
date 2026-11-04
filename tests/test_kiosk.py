@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent
 import api
 import database
+import history
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
@@ -38,12 +39,17 @@ class KioskTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = patch.object(database, "DB_PATH", Path(self.temp.name) / "test.sqlite3")
         self.path.start()
-        api.sessions.clear()
+        history.local_history.clear()
+        history.local_locks.clear()
+        self.redis = patch.object(history, "get_redis", return_value=None)
+        self.redis.start()
         self.client = TestClient(api.app)
 
     def tearDown(self):
         self.client.close()
-        api.sessions.clear()
+        history.local_history.clear()
+        history.local_locks.clear()
+        self.redis.stop()
         self.path.stop()
         self.temp.cleanup()
 
@@ -67,7 +73,7 @@ class KioskTests(unittest.TestCase):
         self.assertEqual(result["order"]["total_paise"], 34000)
         self.assertNotIn("history", result)
         self.assertEqual(self.client.get("/order", headers={HEADER: "bob"}).json()["items"], [])
-        self.assertTrue(api.sessions["alice"].history)
+        self.assertTrue(history.load_history("alice"))
 
     def test_history_stays_on_backend(self):
         with patch.object(agent, "get_model", return_value=ScriptedModel([
@@ -88,10 +94,10 @@ class KioskTests(unittest.TestCase):
     def test_reset_clears_only_current_session(self):
         for name in ("alice", "bob"):
             database.save_order(name, [{"product_id": "cold_coffee", "quantity": 1}])
-            api.conversation(name).history = [AIMessage(content="old")]
+            history.save_history(name, [AIMessage(content="old")])
         self.assertEqual(self.client.post("/reset", headers={HEADER: "alice"}).status_code, 200)
         self.assertEqual(database.get_order("alice")["items"], [])
-        self.assertEqual(api.sessions["alice"].history, [])
+        self.assertEqual(history.load_history("alice"), [])
         self.assertEqual(database.get_order("bob")["total_paise"], 12000)
 
     def test_validation_and_agentcore_path(self):
@@ -112,7 +118,7 @@ class KioskTests(unittest.TestCase):
                 response = self.client.post("/chat", headers={HEADER: "alice"}, json={"prompt": "hi"})
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("private-provider-detail", response.text)
-        self.assertEqual(api.sessions["alice"].history, [])
+        self.assertEqual(history.load_history("alice"), [])
 
     @unittest.skipUnless(importlib.util.find_spec("streamlit"), "Install requirements.txt for UI checks")
     def test_streamlit_uses_http_for_chat_and_reset(self):
