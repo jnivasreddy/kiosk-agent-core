@@ -17,3 +17,9 @@ agentcore/.env.local
 .DS_Store
 .ipynb_checkpoints/
 !README.md
+
+.venv-gradio*/
+
+!GRADIO_SETUP.md
+
+.gradio/

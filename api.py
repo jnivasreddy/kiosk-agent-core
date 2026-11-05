@@ -7,6 +7,7 @@ from redis.exceptions import RedisError
 from pydantic import BaseModel, ConfigDict, Field
 import agent
 import database
+from sessions import customer_for_session
 from history import load_history, save_history, conversation_lock, ConversationBusy
 
 log = logging.getLogger(__name__)
@@ -17,11 +18,13 @@ SessionId = Annotated[str, Header(alias="X-Amzn-Bedrock-AgentCore-Runtime-Sessio
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str = Field(min_length=1, max_length=4000, strict=True)
+    access_token: str | None = Field(default=None, min_length=1, max_length=16384, repr=False)
 
 
-def check_session(session_id):
-    if not session_id.strip():
-        raise HTTPException(status_code=400, detail="A session ID is required.")
+def bearer_token(authorization):
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:]
+    return None
 
 
 @app.exception_handler(RedisError)
@@ -45,17 +48,17 @@ def menu():
 
 
 @app.get("/order")
-def current_order(session_id: SessionId):
-    check_session(session_id)
-    with conversation_lock(session_id):
-        return database.get_order(session_id)
+def current_order(session_id: SessionId, authorization: str | None = Header(default=None)):
+    customer_id = customer_for_session(session_id, bearer_token(authorization))
+    with conversation_lock("customer:" + customer_id), conversation_lock("chat:" + session_id):
+        return database.get_order(customer_id)
 
 
 @app.post("/reset")
-def reset(session_id: SessionId):
-    check_session(session_id)
-    with conversation_lock(session_id):
-        order = database.save_order(session_id, [])
+def reset(session_id: SessionId, authorization: str | None = Header(default=None)):
+    customer_id = customer_for_session(session_id, bearer_token(authorization))
+    with conversation_lock("customer:" + customer_id), conversation_lock("chat:" + session_id):
+        order = database.save_order(customer_id, [])
         save_history(session_id, [])
     return {"order": order}
 
@@ -64,15 +67,13 @@ def reset(session_id: SessionId):
 # using AgentCore's default HTTP contract. No second backend server is needed.
 @app.post("/chat")
 @app.post("/invocations")
-def chat(body: ChatRequest, session_id: SessionId):
+def chat(body: ChatRequest, session_id: SessionId, authorization: str | None = Header(default=None)):
     if not body.prompt.strip():
         raise HTTPException(status_code=422, detail="prompt cannot be blank.")
-    check_session(session_id)
-    with conversation_lock(session_id):
+    customer_id = customer_for_session(session_id, body.access_token or bearer_token(authorization))
+    with conversation_lock("customer:" + customer_id), conversation_lock("chat:" + session_id):
         history = load_history(session_id)
         try:
-            # Session-only demo until verified customer login is configured.
-            customer_id = session_id
             result = agent.respond(body.prompt, customer_id, history)
         except Exception:
             log.exception("Chat failed")

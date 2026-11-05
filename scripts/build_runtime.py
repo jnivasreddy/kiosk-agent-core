@@ -7,7 +7,8 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ["runtime.py", "api.py", "agent.py", "tools.py", "database.py", "history.py"]
+SOURCES = ["runtime.py", "api.py", "agent.py", "tools.py", "database.py", "history.py",
+           "authentication.py", "sessions.py"]
 OUTPUT = ROOT / "dist" / "kiosk-runtime.zip"
 
 

@@ -1,5 +1,6 @@
 """Redis serialization and failures, without touching the configured service."""
 import unittest
+import os
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,11 @@ import history
 
 
 class HistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.mode = patch.dict(os.environ, {"KIOSK_AUTH_MODE": "session_demo"})
+        self.mode.start()
+        self.addCleanup(self.mode.stop)
+
     def test_redis_round_trip_preserves_tool_messages(self):
         redis = MagicMock()
         messages = [

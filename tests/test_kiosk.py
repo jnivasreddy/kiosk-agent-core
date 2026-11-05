@@ -36,6 +36,9 @@ class ScriptedModel:
 
 class KioskTests(unittest.TestCase):
     def setUp(self):
+        self.mode = patch.dict(os.environ, {'KIOSK_AUTH_MODE': 'session_demo'})
+        self.mode.start()
+        self.addCleanup(self.mode.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.path = patch.object(database, "DB_PATH", Path(self.temp.name) / "test.sqlite3")
         self.path.start()

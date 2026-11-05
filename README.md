@@ -108,3 +108,26 @@ python scripts/build_runtime.py
 
 Set REDIS_URL and the model credentials in AgentCore environment configuration.
 Cognito notebook credentials belong to the website backend, not the runtime ZIP.
+
+## Shareable Gradio customer app
+
+See [GRADIO_SETUP.md](GRADIO_SETUP.md). Install requirements-gradio.txt using
+Python 3.12, enable ALLOW_USER_PASSWORD_AUTH in your Cognito app client, and run
+`python gradio_app.py --share`. The public link supports signup, email confirmation,
+login and customer-scoped chat ownership. Keep the process running while sharing.
+The classroom panel explains the identity/session/tool flow. No runtime redeploy
+is required; the runtime still keys orders by conversation, as documented.
+
+## Customer identity update
+
+The updated API requires a Cognito access token in the invocation payload
+`access_token` (or a Bearer header for local REST). authentication.py verifies it;
+sessions.py binds session ownership in Redis; agent tools receive the verified
+Cognito sub as customer_id. history.py still keys conversations by session_id.
+
+Configure COGNITO_REGION, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID and REDIS_URL in
+AgentCore after rebuilding the ZIP. Existing unsigned classroom notebooks only
+work with explicit KIOSK_AUTH_MODE=session_demo; that mode disables customer login.
+Old session-keyed orders are not automatically assigned to customer identities.
+SQLite remains temporary and per-runtime-session on AgentCore; a shared database
+is still required for durable orders across cloud conversations.
